@@ -12,6 +12,10 @@ ESPHome configurations for the custom nodes on my home network.
 ├── devices/               One file per physical node
 │   ├── abb-m1m-meter.yaml ABB M1M power meter via Modbus RTU
 │   └── abb-m1m-meter.md   Wiring & setup notes for that node
+├── tools/                 Bench utilities (run on laptop, not ESP)
+│   ├── m1m_debug.py       Read M1M registers via USB-RS485 for verification
+│   ├── requirements.txt
+│   └── README.md
 ├── secrets.yaml.example   Template; copy to secrets.yaml and fill in
 ├── secrets.yaml           (gitignored) WiFi creds, API/OTA passwords
 └── .gitignore
