@@ -23,6 +23,9 @@ pip install -r tools/requirements.txt
 # Find your dongle's device name
 python tools/m1m_debug.py --list-ports
 
+# Hardware loopback test (verify the USB-serial path before suspecting the meter)
+python tools/m1m_debug.py --port /dev/tty.usbserial-XXXX --loopback
+
 # Auto-discover the slave address (scans 1..32 by default) and poll
 python tools/m1m_debug.py --port /dev/tty.usbserial-XXXX
 
@@ -35,6 +38,27 @@ python tools/m1m_debug.py --port /dev/tty.usbserial-XXXX --slave 1 --once
 # If the meter is on a non-default baud/parity, override:
 python tools/m1m_debug.py --port /dev/tty.usbserial-XXXX --baud 9600 --parity E
 ```
+
+### When the Modbus side isn't responding
+
+Run the loopback test first to split the problem in half:
+
+- **Loopback passes, Modbus still fails** → the USB-serial path is good;
+  the issue is downstream (wiring to the meter, A/B swapped, baud/parity
+  mismatch with the meter, or wrong slave address).
+- **Loopback fails** → the problem is upstream of the bus (wrong serial
+  port selected, dongle not actually plugged in, bad jumper, or a manual-
+  direction RS485 dongle that physically can't loop back through itself).
+
+Wiring for the loopback:
+
+- **USB-TTL adapter + separate MAX485 module:** jumper the FTDI/CH340's
+  TX pin to its RX pin (before the MAX485).
+- **USB-RS485 dongle, auto-direction:** disconnect the meter from the A/B
+  bus and run it as-is — most auto-direction dongles loop back internally.
+- **USB-RS485 dongle, manual DE/RE control:** you can't loopback through
+  one of these. Skip this test and trust the dongle, or grab an auto-
+  direction model.
 
 ### Reading the output
 

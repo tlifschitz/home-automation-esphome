@@ -21,6 +21,10 @@ Usage
     # First, see which serial port your dongle showed up as:
     python tools/m1m_debug.py --list-ports
 
+    # Hardware loopback test (jumper TX↔RX, or use an auto-echo RS485 dongle
+    # with the meter unplugged) — confirms the dongle + driver path works:
+    python tools/m1m_debug.py --port /dev/tty.usbserial-XXXX --loopback
+
     # Then either let the script discover the slave address:
     python tools/m1m_debug.py --port /dev/tty.usbserial-XXXX
 
@@ -47,6 +51,7 @@ except ImportError:
     sys.exit("pymodbus not installed. Run: pip install -r tools/requirements.txt")
 
 try:
+    import serial
     import serial.tools.list_ports
 except ImportError:
     sys.exit("pyserial not installed. Run: pip install -r tools/requirements.txt")
@@ -111,6 +116,84 @@ def list_ports() -> None:
     print("Detected serial ports:")
     for p in ports:
         print(f"  {p.device:<25}  {p.description}")
+
+
+def loopback(port: str, baud: int, parity: str, stopbits: int) -> int:
+    """Raw serial loopback. Sends 0x00..0xFF, reads back, compares.
+
+    Wiring options:
+      • USB-TTL adapter: short TX↔RX with a jumper wire.
+      • USB-RS485 dongle with auto-direction transceiver: the chip
+        usually echoes locally — just unplug the M1M from the bus
+        first so it doesn't reply on top of the echo.
+      • USB-RS485 dongle with manual DE/RE direction control: a true
+        loopback isn't possible (half-duplex on one differential pair
+        with the line driver disabled while receiving).
+
+    Returns the shell exit code: 0 OK, 2 nothing back, 3 mismatch.
+    """
+    pattern = bytes(range(256))
+
+    print(f"Loopback test on {port}")
+    print(f"  Settings: {baud} baud, 8{parity}{stopbits}")
+    print(f"  Sending {len(pattern)} bytes (0x00..0xFF), expecting echo back.")
+    print(f"  Reminder: jumper TX↔RX, or rely on RS485 auto-echo with the")
+    print(f"  meter disconnected from the bus.")
+    print()
+
+    # Per-call timeout: time to TX + RX + slack
+    bit_time = (len(pattern) * 10) / baud
+    timeout = bit_time * 2 + 0.5
+
+    try:
+        ser = serial.Serial(
+            port=port,
+            baudrate=baud,
+            parity=parity,
+            stopbits=stopbits,
+            bytesize=8,
+            timeout=timeout,
+        )
+    except serial.SerialException as exc:
+        print(f"✗ Failed to open {port}: {exc}")
+        return 2
+
+    with ser:
+        ser.reset_input_buffer()
+        ser.reset_output_buffer()
+        ser.write(pattern)
+        ser.flush()
+        received = ser.read(len(pattern))
+
+    if not received:
+        print(f"✗ Nothing received within {timeout:.1f}s.")
+        print()
+        print("  Likely causes:")
+        print("    - TX and RX aren't actually shorted (or the jumper has a bad contact).")
+        print("    - You're on a half-duplex RS485 dongle with manual DE/RE control —")
+        print("      it physically can't loop back through itself. Either:")
+        print("        a) switch to an auto-direction dongle, or")
+        print("        b) skip the loopback test and verify with the meter present.")
+        print("    - Wrong --port. Run with --list-ports to double-check.")
+        return 2
+
+    if received == pattern:
+        print(f"✓ Loopback OK: received all {len(received)} bytes correctly.")
+        print(f"  The USB-serial path is good. If Modbus to the meter still")
+        print(f"  fails, the problem is downstream of the dongle (wiring to the")
+        print(f"  meter, A/B swapped, baud/parity mismatch, or meter address).")
+        return 0
+
+    matches = sum(1 for a, b in zip(received, pattern) if a == b)
+    print(f"⚠ Mismatch: received {len(received)} / {len(pattern)} bytes "
+          f"({matches} match).")
+    print(f"  Sent first 16:     {pattern[:16].hex(' ')}")
+    print(f"  Received first 16: {received[:16].hex(' ')}")
+    print()
+    print("  Mismatches usually mean line noise (try a slower --baud), or the")
+    print("  echo coming back through a different framing (parity/stopbits set")
+    print("  the way the dongle interprets the loopback bytes).")
+    return 3
 
 
 def discover(client: ModbusSerialClient, start: int, end: int) -> Optional[int]:
@@ -189,6 +272,10 @@ def main():
                     help="Print one dump and exit")
     ap.add_argument("--list-ports", action="store_true",
                     help="List available serial ports and exit")
+    ap.add_argument("--loopback", action="store_true",
+                    help="Hardware loopback test: send 0x00..0xFF on the port "
+                         "and verify it comes back. Jumper TX↔RX, or unplug "
+                         "the meter and rely on an auto-echo RS485 dongle.")
     ap.add_argument("--timeout", type=float, default=1.0,
                     help="Per-request timeout in seconds (default: 1.0)")
     args = ap.parse_args()
@@ -201,6 +288,10 @@ def main():
         print("No --port specified. Available ports:\n")
         list_ports()
         sys.exit("\nRe-run with --port <device>.")
+
+    if args.loopback:
+        rc = loopback(args.port, args.baud, args.parity, args.stopbits)
+        sys.exit(rc)
 
     client = ModbusSerialClient(
         port=args.port,
