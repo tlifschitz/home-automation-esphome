@@ -126,23 +126,35 @@ works against any USB-TTL hardware regardless.
 
 ```
 ── slave 1 @ 18:24:07 ──
-  Addr  Name                      Raw (hex words)                  Value
-------------------------------------------------------------------------
-0x5b02  Voltage L1                0000 08F4                     228.4 V
-0x5b10  Current L1                0000 03C2                      9.62 A
-0x5b1a  Active power total        0000 5588                    218.96 W
-0x5b32  Frequency                 1389                          50.01 Hz
-0x5000  Active energy import      0000 0000 0001 86A0          1000.00 kWh
+ Addr  Name                      Raw (hex words)            Value
+-----------------------------------------------------------------------
+  102  Active power L1           0000 4340                    195.0 W
+  118  Power factor L1           0000 3F66                    0.898
+  126  Apparent power L1         0000 4359                    217.0 VA
+  142  Voltage L1 (L-N)          0000 4364                    228.4 V
+  150  Current L1                CCCD 3F19                     0.60 A
+  156  Frequency                 0000 4248                    50.01 Hz
+  158  Energy imported           86A0 0001                  100000 Wh
 ```
 
 The **Raw (hex words)** column is what's actually on the wire — useful
 if the engineering value looks wrong: if the bytes look right but the
-value is off, it's a scaling or sign issue; if the bytes themselves
-look swapped (e.g. you expect 228.4 V but see something like 0x08F4
-appearing in the wrong word position), it's a byte-order issue and you'd
-need to use `U_DWORD_R`/`S_DWORD_R` in the ESPHome YAML instead of
-`U_DWORD`/`S_DWORD`.
+value is off, it's likely a byte-order issue (try `decode_float_cdab`
+vs. a non-swapped variant); if the address itself is reading 0xFFFF or
+garbage, the register doesn't exist at that address on this meter.
 
-Confirm each Real-time value against what the meter shows on its
+Confirm each value against what the meter shows on its front-panel
 display. If they all match, the addresses in
-`devices/abb-m1m-meter.yaml` are correct for your M1M generation.
+`devices/abb-m1m-meter.yaml` are correct for your meter.
+
+### Register map
+
+This script reads the **legacy M1M 12 register map** — 32-bit IEEE 754
+floats at decimal addresses 100..160, word-swapped (CDAB) byte order.
+That matches the older M1M 10/12 generation. **It does NOT match the
+M1M 15/20/30 family** in the "M1M 96 Modbus Manual V1.3C" (those use
+scaled integers at 0x5B00..). Don't be fooled by ABB grouping them
+under the same product family — the wire formats are completely
+different. If you adapt this script for an M1M 15/20/30, you'll need
+to rewrite the `REGISTERS` catalog with the modern addresses and
+switch the decoder from `decode_float_cdab` to scaled-integer math.

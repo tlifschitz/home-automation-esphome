@@ -150,22 +150,49 @@ esphome run devices/abb-m1m-meter.yaml
 
 After the first USB flash, updates go OTA over WiFi.
 
+## Register map (and why it's different from the M1M 96 manual)
+
+The M1M 12 uses the **legacy ABB M1M register map** that was inherited
+from the older M1M 10/12 generation: 32-bit IEEE 754 floats at decimal
+addresses 100..160, word-swapped (CDAB) byte order. This is **not** the
+same as the M1M 15/20/30 family map in the "M1M 96 Modbus Manual V1.3C"
+PDF (which uses scaled 32/64-bit integers at 0x5B00..).
+
+Addresses in this YAML:
+
+| Quantity            | Addr | Type          | Source       |
+|---------------------|------|---------------|--------------|
+| Active power L1     | 102  | float (FP32_R)| L1 of per-phase block; Total at 100 |
+| Power factor L1     | 118  | float (FP32_R)| Total at 116 |
+| Apparent power L1   | 126  | float (FP32_R)| Total at 124 |
+| Voltage L1 (L-N)    | 142  | float (FP32_R)| Avg at 140; line voltage L1-L2 at 134 |
+| Current L1          | 150  | float (FP32_R)| Total at 148 |
+| Frequency           | 156  | float (FP32_R)| —            |
+| Energy imported     | 158  | float (FP32_R)| Wh; multiplied by 0.001 for HA |
+
+Per-phase quantities are laid out [Total, L1, L2, L3] back-to-back (2
+registers each, phase stride +2). To add L2 / L3 readings, copy a sensor
+and bump the address by 2 or 4.
+
 ## Verifying the register map
 
-The Modbus manual that ships with the M1M 15/20/30 family doesn't formally
-list the M1M 12, so sanity-check the addresses on first run:
+Sanity-check the addresses on first run:
 
 1. Open HA → Developer Tools → States, search `sensor.abb_m1m_meter_voltage`.
 2. Compare to L1 voltage on the meter's front panel.
-3. Repeat for current and active power.
+3. Repeat for current, active power, frequency.
 
 If a reading is wildly off:
 
-- **Off by a power of 10** → fix the `multiply` filter (wrong resolution).
-- **Reads as `unknown` or hangs** → wrong address or wrong baud/parity.
-- **Reads as a huge number** → byte/word order swap. Try `U_DWORD_R` /
-  `S_DWORD_R` value types, or look up the M1M 12 legacy register map and
-  patch the addresses.
+- **Reads as `unknown` or hangs** → wrong address, wrong baud/parity, or
+  the bus isn't physically working (run `tools/m1m_debug.py --loopback`
+  first to rule out the USB-serial path).
+- **Reads as a NaN or absurd number (~10³⁸ or denormalised tiny)** →
+  byte-order issue. Try `value_type: FP32` instead of `FP32_R`, or set
+  `byte_order: little_endian` on the modbus_controller.
+- **Reads as zero** → meter may not be measuring on that phase (single-
+  phase wired into a 3-phase config slot), or the register is for a
+  phase that doesn't exist in your wiring configuration.
 
 ## Home Assistant Energy dashboard
 

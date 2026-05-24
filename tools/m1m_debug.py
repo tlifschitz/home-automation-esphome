@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """
-m1m_debug.py — Read the ABB M1M power meter over Modbus RTU from a laptop
-and print its registers, so you can sanity-check the addresses/scaling
-against the meter's front-panel display.
+m1m_debug.py — Read the ABB M1M 12 power meter over Modbus RTU from a
+laptop and print its registers, so you can sanity-check addresses against
+the meter's front-panel display before flashing the ESP.
+
+Reads the LEGACY M1M 12 register map (32-bit floats at decimal addresses
+100..160, word-swapped CDAB byte order) — NOT the M1M 96 manual's
+scaled-integer 0x5B00 layout (which applies to M1M 15/20/30 only).
 
 Hardware
 --------
@@ -40,9 +44,10 @@ Install
 """
 
 import argparse
+import struct
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional
 
 try:
@@ -59,32 +64,42 @@ except ImportError:
 
 # ---------------------------------------------------------------------------
 # Register catalog — keep this in sync with devices/abb-m1m-meter.yaml
-# Addresses from "M1M 96 Modbus Manual V1.3C" §4.2 and §4.3.
+#
+# The M1M 12 uses the LEGACY ABB M1M register map: 32-bit IEEE 754 floats
+# in the 100..160 decimal address range, word-swapped (CDAB) byte order.
+# This is NOT the M1M 96 manual's 0x5B00 scaled-integer layout — that map
+# applies to the M1M 15/20/30 series.
+#
+# Per-phase quantities are laid out [Total, L1, L2, L3] back-to-back
+# (2 registers each, phase stride +2). For single-phase use, read L1.
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class Register:
     address: int       # holding-register address (function code 0x03)
     name: str
-    n_regs: int        # 1 (16-bit), 2 (32-bit), or 4 (64-bit)
-    signed: bool
-    scale: float       # raw value * scale = engineering value
     unit: str
     decimals: int = 2
+    # The legacy M1M 12 is float-only for measurements; if you add a
+    # u32 counter later (e.g. "Load seconds" at 216), set is_float=False.
+    is_float: bool = True
 
 
 REGISTERS: List[Register] = [
-    # --- Real-time data (§4.3) ---
-    Register(0x5B02, "Voltage L1",            2, False, 0.1,   "V",   decimals=1),
-    Register(0x5B10, "Current L1",            2, False, 0.01,  "A",   decimals=2),
-    Register(0x5B1A, "Active power total",    2, True,  0.01,  "W",   decimals=1),
-    Register(0x5B22, "Reactive power total",  2, True,  0.01,  "var", decimals=1),
-    Register(0x5B2A, "Apparent power total",  2, True,  0.01,  "VA",  decimals=1),
-    Register(0x5B32, "Frequency",             1, False, 0.01,  "Hz",  decimals=2),
-    Register(0x5B40, "Power factor total",    1, True,  0.001, "",    decimals=3),
-    # --- Energy counters (§4.2) ---
-    Register(0x5000, "Active energy import",  4, False, 0.01,  "kWh", decimals=2),
-    Register(0x5004, "Active energy export",  4, False, 0.01,  "kWh", decimals=2),
+    Register(102, "Active power L1",     "W",   decimals=1),
+    Register(118, "Power factor L1",     "",    decimals=3),
+    Register(126, "Apparent power L1",   "VA",  decimals=1),
+    Register(142, "Voltage L1 (L-N)",    "V",   decimals=1),
+    Register(150, "Current L1",          "A",   decimals=2),
+    Register(156, "Frequency",           "Hz",  decimals=2),
+    Register(158, "Energy imported",     "Wh",  decimals=0),
+    # --- Useful totals (uncomment to also dump three-phase aggregates) ---
+    # Register(100, "Active power total",   "W",   decimals=1),
+    # Register(116, "Power factor avg",     "",    decimals=3),
+    # Register(124, "Apparent power total", "VA",  decimals=1),
+    # Register(140, "Voltage avg (L-N)",    "V",   decimals=1),
+    # Register(148, "Current total",        "A",   decimals=2),
 ]
 
 
@@ -92,20 +107,26 @@ REGISTERS: List[Register] = [
 # Helpers
 # ---------------------------------------------------------------------------
 
-def decode_regs(regs: List[int], n_regs: int, signed: bool) -> int:
-    """Combine N consecutive 16-bit registers into one int.
+def decode_float_cdab(regs: List[int]) -> float:
+    """Decode an M1M 12 word-swapped (CDAB) IEEE 754 float.
 
-    Modbus is big-endian: the first register holds the most-significant
-    word. Two's-complement is applied for signed types.
+    The meter sends 4 bytes such that minimalmodbus / pymodbus reads them
+    into two 16-bit registers where reg[0] is the LOW word and reg[1] is
+    the HIGH word — i.e. swapped relative to standard Modbus big-endian.
+    This matches ESPHome's value_type: FP32_R.
     """
-    value = 0
-    for r in regs[:n_regs]:
-        value = (value << 16) | (r & 0xFFFF)
-    if signed:
-        sign_bit = 1 << (n_regs * 16 - 1)
-        if value & sign_bit:
-            value -= 1 << (n_regs * 16)
-    return value
+    if len(regs) < 2:
+        raise ValueError("decode_float_cdab needs 2 registers")
+    # Swap word order so [low, high] -> [high, low], then big-endian decode.
+    packed = struct.pack(">HH", regs[1] & 0xFFFF, regs[0] & 0xFFFF)
+    return struct.unpack(">f", packed)[0]
+
+
+def decode_u32_cdab(regs: List[int]) -> int:
+    """Decode a word-swapped 32-bit unsigned int (matches the float layout)."""
+    if len(regs) < 2:
+        raise ValueError("decode_u32_cdab needs 2 registers")
+    return ((regs[1] & 0xFFFF) << 16) | (regs[0] & 0xFFFF)
 
 
 def list_ports() -> None:
@@ -205,7 +226,9 @@ def discover(client: ModbusSerialClient, start: int, end: int) -> Optional[int]:
         sys.stdout.write(f"\r  addr {addr:3d}...   ")
         sys.stdout.flush()
         try:
-            result = client.read_holding_registers(address=0x5B02, count=2, slave=addr)
+            # Read VLN L1 (addr 142, 2 registers = one float). Any non-error
+            # response means the slave is alive at this address.
+            result = client.read_holding_registers(address=142, count=2, slave=addr)
         except Exception:
             continue
         if result is not None and not result.isError():
@@ -219,28 +242,35 @@ def dump_once(client: ModbusSerialClient, slave: int) -> None:
     """Read every register in REGISTERS and print a table."""
     ts = time.strftime("%H:%M:%S")
     print(f"\n── slave {slave} @ {ts} ──")
-    header = f"{'Addr':>6}  {'Name':<24}  {'Raw (hex words)':<22}  {'Value':>16}"
+    header = f"{'Addr':>5}  {'Name':<24}  {'Raw (hex words)':<14}  {'Value':>16}"
     print(header)
     print("-" * len(header))
 
     for r in REGISTERS:
         try:
             result = client.read_holding_registers(
-                address=r.address, count=r.n_regs, slave=slave
+                address=r.address, count=2, slave=slave
             )
         except Exception as exc:
-            print(f"{r.address:#06x}  {r.name:<24}  <exception: {exc}>")
+            print(f"{r.address:>5}  {r.name:<24}  <exception: {exc}>")
             continue
 
         if result is None or result.isError():
-            print(f"{r.address:#06x}  {r.name:<24}  {'<error>':<22}  {'-':>16}")
+            print(f"{r.address:>5}  {r.name:<24}  {'<error>':<14}  {'-':>16}")
             continue
 
-        raw_int = decode_regs(result.registers, r.n_regs, r.signed)
-        scaled = raw_int * r.scale
         raw_hex = " ".join(f"{w:04X}" for w in result.registers)
-        value_str = f"{scaled:.{r.decimals}f} {r.unit}".strip()
-        print(f"{r.address:#06x}  {r.name:<24}  {raw_hex:<22}  {value_str:>16}")
+        try:
+            if r.is_float:
+                value = decode_float_cdab(result.registers)
+            else:
+                value = decode_u32_cdab(result.registers)
+        except Exception as exc:
+            print(f"{r.address:>5}  {r.name:<24}  {raw_hex:<14}  <decode: {exc}>")
+            continue
+
+        value_str = f"{value:.{r.decimals}f} {r.unit}".strip()
+        print(f"{r.address:>5}  {r.name:<24}  {raw_hex:<14}  {value_str:>16}")
 
 
 # ---------------------------------------------------------------------------
