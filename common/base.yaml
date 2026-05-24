@@ -1,0 +1,39 @@
+# Universal config fragment for every node in this repo.
+# Pull in from a device YAML via:
+#
+#   packages:
+#     base: !include ../common/base.yaml
+#
+# Expects the device file to define ${friendly_name} in substitutions.
+
+logger:
+  level: INFO
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  # Fallback hotspot if WiFi fails — handy during first bring-up
+  ap:
+    ssid: "${friendly_name} Setup"
+    password: !secret fallback_ap_password
+
+captive_portal:
+
+# Diagnostic entities every node should expose
+sensor:
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 60s
+    entity_category: diagnostic
+
+binary_sensor:
+  - platform: status
+    name: "Status"

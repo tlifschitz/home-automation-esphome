@@ -1,0 +1,20 @@
+# Real secrets — only the .example version is committed
+secrets.yaml
+
+# ESPHome build artifacts
+.esphome/
+**/.esphome/
+*.bin
+*.elf
+
+# Editors
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Python / virtualenvs (in case esphome CLI is installed locally)
+__pycache__/
+*.pyc
+.venv/
+venv/

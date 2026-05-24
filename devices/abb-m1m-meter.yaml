@@ -1,0 +1,188 @@
+# ABB M1M power meter via Modbus RTU
+# Hardware: Wemos D1 mini (ESP8266) + MAX485 module.
+# See abb-m1m-meter.md for wiring and bring-up notes.
+
+substitutions:
+  device_name: abb-m1m-meter
+  friendly_name: "ABB M1M Meter"
+
+  # ---- Meter side: must match what's configured on the M1M ----
+  modbus_address: "1"
+  modbus_baud: "19200"
+  modbus_parity: NONE       # NONE | EVEN | ODD
+  modbus_stop_bits: "1"
+
+  # ---- ESP side: Wemos D1 mini pins (UART0 swapped to GPIO13/15) ----
+  modbus_tx_pin: GPIO15           # D8 -> MAX485 DI
+  modbus_rx_pin: GPIO13           # D7 <- MAX485 RO
+  modbus_flow_control_pin: GPIO5  # D1 -> MAX485 DE+RE
+
+  poll_interval: 10s
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+
+esp8266:
+  board: d1_mini
+  restore_from_flash: true
+
+packages:
+  base:   !include ../common/base.yaml
+  modbus: !include ../common/modbus-rtu.yaml
+
+# Per-device modbus_controller (slave address belongs here, not in the
+# shared modbus-rtu package).
+modbus_controller:
+  - id: m1m
+    address: ${modbus_address}
+    modbus_id: mod_bus
+    setup_priority: -10
+    update_interval: ${poll_interval}
+    command_throttle: 100ms
+
+# ---- Sensors -----------------------------------------------------------
+# Register addresses from "M1M 96 Modbus Manual V1.3C" §4.2 (Energy) and
+# §4.3 (Real Time Data). All are holding registers (FC 0x03), big-endian.
+
+sensor:
+  # Voltage L1
+  - platform: modbus_controller
+    modbus_controller_id: m1m
+    name: "Voltage"
+    id: m1m_voltage
+    register_type: holding
+    address: 0x5B02
+    value_type: U_DWORD       # 2 regs, unsigned 32-bit
+    unit_of_measurement: V
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 1
+    filters:
+      - multiply: 0.1
+      # 0xFFFFFFFF == "meter has no value" — drop instead of spiking
+      - lambda: |-
+          if (x > 1.0e8) return {};
+          return x;
+
+  # Current L1
+  - platform: modbus_controller
+    modbus_controller_id: m1m
+    name: "Current"
+    id: m1m_current
+    register_type: holding
+    address: 0x5B10
+    value_type: U_DWORD
+    unit_of_measurement: A
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.01
+      - lambda: |-
+          if (x > 1.0e8) return {};
+          return x;
+
+  # Active power (total = L1 in single-phase)
+  - platform: modbus_controller
+    modbus_controller_id: m1m
+    name: "Active Power"
+    id: m1m_active_power
+    register_type: holding
+    address: 0x5B1A
+    value_type: S_DWORD       # signed: negative = export
+    unit_of_measurement: W
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 1
+    filters:
+      - multiply: 0.01
+
+  # Reactive power
+  - platform: modbus_controller
+    modbus_controller_id: m1m
+    name: "Reactive Power"
+    id: m1m_reactive_power
+    register_type: holding
+    address: 0x5B22
+    value_type: S_DWORD
+    unit_of_measurement: var
+    device_class: reactive_power
+    state_class: measurement
+    accuracy_decimals: 1
+    filters:
+      - multiply: 0.01
+
+  # Apparent power
+  - platform: modbus_controller
+    modbus_controller_id: m1m
+    name: "Apparent Power"
+    id: m1m_apparent_power
+    register_type: holding
+    address: 0x5B2A
+    value_type: S_DWORD
+    unit_of_measurement: VA
+    device_class: apparent_power
+    state_class: measurement
+    accuracy_decimals: 1
+    filters:
+      - multiply: 0.01
+
+  # Power factor
+  - platform: modbus_controller
+    modbus_controller_id: m1m
+    name: "Power Factor"
+    id: m1m_power_factor
+    register_type: holding
+    address: 0x5B40
+    value_type: S_WORD        # signed 16-bit
+    device_class: power_factor
+    state_class: measurement
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001
+
+  # Frequency
+  - platform: modbus_controller
+    modbus_controller_id: m1m
+    name: "Frequency"
+    id: m1m_frequency
+    register_type: holding
+    address: 0x5B32
+    value_type: U_WORD
+    unit_of_measurement: Hz
+    device_class: frequency
+    state_class: measurement
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.01
+
+  # Active energy import — feeds the HA Energy dashboard
+  - platform: modbus_controller
+    modbus_controller_id: m1m
+    name: "Energy Imported"
+    id: m1m_energy_import
+    register_type: holding
+    address: 0x5000
+    value_type: U_QWORD       # 4 regs, unsigned 64-bit
+    unit_of_measurement: kWh
+    device_class: energy
+    state_class: total_increasing
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.01
+
+  # Active energy export (will read 0 if you have no solar / export)
+  - platform: modbus_controller
+    modbus_controller_id: m1m
+    name: "Energy Exported"
+    id: m1m_energy_export
+    register_type: holding
+    address: 0x5004
+    value_type: U_QWORD
+    unit_of_measurement: kWh
+    device_class: energy
+    state_class: total_increasing
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.01

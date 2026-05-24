@@ -1,0 +1,34 @@
+# RS485 + Modbus RTU stack for any node that talks Modbus.
+# Pull in from a device YAML via:
+#
+#   packages:
+#     base:   !include ../common/base.yaml
+#     modbus: !include ../common/modbus-rtu.yaml
+#
+# Expects the device file to define these substitutions:
+#
+#   modbus_tx_pin            GPIO connected to RS485 transceiver DI
+#   modbus_rx_pin            GPIO connected to RS485 transceiver RO
+#   modbus_flow_control_pin  GPIO connected to DE+RE (tied together).
+#                            Set to "" if your transceiver has automatic
+#                            direction control (e.g. MAX13487, XY-017).
+#   modbus_baud              e.g. "19200"
+#   modbus_parity            NONE | EVEN | ODD
+#   modbus_stop_bits         "1" or "2"
+#
+# Device-specific modbus_controller entries (one per slave) stay in the
+# device YAML — they need a unique slave address.
+
+uart:
+  id: mod_uart
+  tx_pin: ${modbus_tx_pin}
+  rx_pin: ${modbus_rx_pin}
+  baud_rate: ${modbus_baud}
+  parity: ${modbus_parity}
+  stop_bits: ${modbus_stop_bits}
+
+modbus:
+  id: mod_bus
+  uart_id: mod_uart
+  flow_control_pin: ${modbus_flow_control_pin}
+  send_wait_time: 200ms
