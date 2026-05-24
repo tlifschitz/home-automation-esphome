@@ -35,12 +35,109 @@ free for `esphome logs` over USB during bring-up.
 
 ## Meter settings (front panel)
 
-- Modbus address:  1   (matches `modbus_address` in the YAML)
+These must match the `modbus_*` substitutions in `abb-m1m-meter.yaml`.
+The values I'm shipping the YAML with:
+
+- Modbus address:  1
 - Baud:            19200
 - Parity:          NONE
 - Stop bits:       1
 
-If yours differs, edit `substitutions:` in `abb-m1m-meter.yaml`.
+If yours differ, either change the meter or change the YAML — both must
+agree. The next section walks through reading and changing them from the
+front panel.
+
+## Reading & changing Modbus settings on the M1M 12 front panel
+
+The M1M 12 has two buttons on the front: **UP (▲)** and **DOWN (▼)**.
+Their behavior depends on mode:
+
+| Mode                  | UP                                     | DOWN                       |
+|-----------------------|----------------------------------------|----------------------------|
+| RUN (normal display)  | Scroll through measurement pages       | Scroll through pages       |
+| SETUP, viewing a param| Advance to next parameter              | Enter edit mode for it     |
+| SETUP, editing a value| Cycle the value / decrement the digit  | Accept and move on         |
+
+### 1. Enter SETUP mode
+
+Press **UP + DOWN simultaneously**. The display shows:
+
+```
+Row 1:  0000          ← first digit blinking
+Row 2:  SEt.CLr
+```
+
+### 2. Enter the password `1000`
+
+The first digit blinks; press **UP** to cycle it (the meter cycles
+0 → 9 → 8 → … → 1, so nine UP presses to reach `1`). Press **DOWN** to
+accept that digit and advance to the next one. The remaining three
+digits stay at `0`, so just press **DOWN** three more times to accept
+them.
+
+### 3. Walk to the communication parameters
+
+From the password screen, keep pressing **UP** to advance through the
+parameter list. Watch Row 2 for the tag of the current parameter:
+
+| Row 2 tag | Parameter             | Row 1 shows                       |
+|-----------|-----------------------|-----------------------------------|
+| `ELEA`    | Power system          | `StAr` / `dELt` / `1.Ph`          |
+| `PPri`    | PT primary            | 4-digit voltage                   |
+| `PSEC`    | PT secondary          | 100 / 110 / 120 V                 |
+| `CPri`    | CT primary            | 4-digit current                   |
+| `CSEC`    | CT secondary          | 1 / 5 A                           |
+| `rEUL`    | Reverse lock          | `no` / `YES`                      |
+| `URSt`    | VA computation method | `Arth` / `UECt` / `UECH`          |
+| **`bAUd`**| **Baud rate**         | `2400` / `4800` / `9600` / `19.20k` |
+| **`PrtY`**| **Parity**            | `EUEn` / `odd` / `no`             |
+| **`dUId`**| **Modbus address**    | 1 – 247                           |
+| `PUd`     | User password         | `----` (hidden)                   |
+| `EnEr`    | Energy display format | `rESL` / `Cntr`                   |
+| `ESEL`    | Energy unit           | `Wh` / `VAh`                      |
+
+The three rows in bold are the ones to verify against the YAML.
+
+### 4. Change a value
+
+When the parameter you want is on the display:
+
+1. Press **DOWN** — Row 1 starts blinking (you're now in edit mode).
+2. Press **UP** to cycle through the options (for `bAUd` / `PrtY`) or
+   to change the current digit (for `dUId`).
+3. For multi-digit values like `dUId`, press **DOWN** to accept the
+   current digit and move to the next.
+4. After the last digit (or the only option), pressing **DOWN** commits
+   the value and advances to the next parameter.
+
+### 5. Exit
+
+Either press **UP** until you've cycled past every parameter (the meter
+returns to RUN mode automatically), or wait for the inactivity timeout.
+
+### Factory defaults (per the M1M 12 user manual)
+
+| Parameter   | Default   |
+|-------------|-----------|
+| Baud rate   | `9600`    |
+| Parity      | `EUEn` (Even) — shown in the manual's example |
+| Address     | `1`       |
+| Password    | `1000`    |
+
+> **Stop bits aren't user-configurable.** The M1M 12 spec sheet
+> (page 2 of the user manual) lists "Stop bit: 1,2" as supported on the
+> wire, but there's no setup step for it — the meter uses a fixed
+> frame format keyed off the parity choice. The YAML defaults to
+> `stop_bits: 1`. If the bus stays silent with parity = `NONE`, try
+> `stop_bits: 2`.
+
+### Useful detail: the RS485 port is optically isolated
+
+The M1M 12's spec sheet calls out "RS485 with optical isolation" — the
+meter takes care of galvanic isolation from the mains-referenced
+measurement side, so a bare MAX485 module on the ESP is electrically
+safe. You only need an isolated transceiver if you're paranoid about
+ground loops on a long run.
 
 ## Flashing
 
