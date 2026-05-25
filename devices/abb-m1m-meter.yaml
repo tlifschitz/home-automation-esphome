@@ -45,13 +45,43 @@ packages:
   base:   !include ../common/base.yaml
   modbus: !include ../common/modbus-rtu.yaml
 
+# Override base.yaml's logger: disable hardware UART output so GPIO2 is
+# free for the built-in LED below. (On ESP8266 with UART0 used for Modbus
+# via UART0_SWAP, the logger's only remaining hardware option is UART1 on
+# GPIO2, which would conflict with the LED.) Logs still go over WiFi/API.
+logger:
+  baud_rate: 0
+
+# ---- Globals for the diagnostic sensors ---------------------------------
+globals:
+  - id: m1m_last_success_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+  - id: m1m_success_count
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+# ---- Built-in LED on Wemos D1 mini (GPIO2, active-low) -----------------
+# Flashed briefly on every successful Modbus read so you can visually
+# confirm the bus is talking without opening logs or HA.
+output:
+  - platform: gpio
+    pin:
+      number: GPIO2
+      inverted: true
+    id: builtin_led
+
 modbus_controller:
   - id: m1m
     address: ${modbus_address}
     modbus_id: mod_bus
     setup_priority: -10
     update_interval: ${poll_interval}
-    command_throttle: 100ms
+    command_throttle: 1000ms
+    allow_duplicate_commands: false
+    max_cmd_retries: 2
 
 # ---- Sensors -------------------------------------------------------------
 # All values are 32-bit IEEE 754 floats. Use FP32_R (word-swapped) because
@@ -72,6 +102,8 @@ sensor:
     device_class: voltage
     state_class: measurement
     accuracy_decimals: 1
+    filters:
+      - delta: 0.5
 
   # ---- Current L1 ----
   - platform: modbus_controller
@@ -85,8 +117,12 @@ sensor:
     device_class: current
     state_class: measurement
     accuracy_decimals: 2
+    filters:
+      - delta: 0.5
 
   # ---- Active power L1 ----
+  # No delta filter on this one — its on_value hook fires every poll and
+  # drives the LED blink + liveness tracking for the diagnostic sensors.
   - platform: modbus_controller
     modbus_controller_id: m1m
     name: "Active Power"
@@ -98,6 +134,14 @@ sensor:
     device_class: power
     state_class: measurement
     accuracy_decimals: 1
+    on_value:
+      then:
+        - lambda: |-
+            id(m1m_last_success_ms) = millis();
+            id(m1m_success_count) += 1;
+        - output.turn_on: builtin_led
+        - delay: 50ms
+        - output.turn_off: builtin_led
 
   # ---- Apparent power L1 ----
   - platform: modbus_controller
@@ -136,6 +180,8 @@ sensor:
     device_class: frequency
     state_class: measurement
     accuracy_decimals: 2
+    filters:
+      - delta: 0.2
 
   # ---- Active energy imported — feeds the HA Energy dashboard ----
   # Meter reports in Wh; we multiply by 0.001 so HA sees kWh, which is
@@ -153,3 +199,44 @@ sensor:
     accuracy_decimals: 3
     filters:
       - multiply: 0.001
+      - delta: 0.5
+    skip_updates: 9
+
+  # ---- Diagnostic: time since last successful Modbus read ---------------
+  - platform: template
+    name: "Modbus Seconds Since Last Read"
+    id: m1m_seconds_since_last
+    unit_of_measurement: s
+    device_class: duration
+    state_class: measurement
+    entity_category: diagnostic
+    update_interval: 10s
+    accuracy_decimals: 0
+    lambda: |-
+      if (id(m1m_last_success_ms) == 0) return NAN;
+      return (millis() - id(m1m_last_success_ms)) / 1000.0f;
+
+  # ---- Diagnostic: total successful reads since boot --------------------
+  - platform: template
+    name: "Modbus Successful Reads"
+    id: m1m_success_reads
+    state_class: total_increasing
+    entity_category: diagnostic
+    update_interval: 30s
+    accuracy_decimals: 0
+    lambda: |-
+      return id(m1m_success_count);
+
+# ---- Diagnostic: online/offline binary sensor ---------------------------
+binary_sensor:
+  - platform: template
+    name: "Modbus Online"
+    id: m1m_online
+    device_class: connectivity
+    entity_category: diagnostic
+    lambda: |-
+      if (id(m1m_last_success_ms) == 0) return false;
+      // Online if a successful read happened within the last 3 polls
+      // (poll_interval is 10s, so 30s grace). Adjust if you change
+      // poll_interval.
+      return (millis() - id(m1m_last_success_ms)) < 30000;

@@ -40,7 +40,7 @@ The values I'm shipping the YAML with:
 
 - Modbus address:  1
 - Baud:            19200
-- Parity:          NONE
+- Parity:          EVEN
 - Stop bits:       1
 
 If yours differ, either change the meter or change the YAML — both must

@@ -26,6 +26,7 @@ uart:
   baud_rate: ${modbus_baud}
   parity: ${modbus_parity}
   stop_bits: ${modbus_stop_bits}
+  rx_buffer_size: 128
 
 modbus:
   id: mod_bus
