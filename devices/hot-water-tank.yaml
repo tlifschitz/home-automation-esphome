@@ -43,6 +43,14 @@ esp8266:
 packages:
   base: !include ../common/base.yaml
 
+# millis() timestamp of the last heating ON/OFF transition; drives the
+# "Heating mm:ss / Idle hh:mm:ss" timer on the display.
+globals:
+  - id: heater_changed_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
 # DS18B20(s) on a single GPIO one-wire bus. 4.7 kΩ pull-up from data to 3V3.
 one_wire:
   - platform: gpio
@@ -61,6 +69,10 @@ font:
     id: font_temp
     size: 26
     glyphs: "0123456789.- °C"
+  - file: "gfonts://Roboto"
+    id: font_status         # bottom status line ("Heating mm:ss" / "Idle hh:mm:ss")
+    size: 14
+    glyphs: "Heating Idl:0123456789"   # unique glyphs only (Idle's e/d/l covered)
   # Material Design Icons — a friendlier face than plain text.
   - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
     id: font_icons          # large, left of the temperature
@@ -86,15 +98,25 @@ display:
       float t = id(tank_top_temp).state;
       // Thermometer icon (always) on the left, temperature right-aligned.
       // Both vertically centered on the 64px-tall panel.
-      it.print(8, 32, id(font_icons), TextAlign::CENTER_LEFT, "\U000F050F");
+      it.print(8, 30, id(font_icons), TextAlign::CENTER_LEFT, "\U000F050F");
       if (isnan(t)) {
-        it.print(120, 32, id(font_temp), TextAlign::CENTER_RIGHT, "-- °C");
+        it.print(120, 30, id(font_temp), TextAlign::CENTER_RIGHT, "-- °C");
       } else {
-        it.printf(120, 32, id(font_temp), TextAlign::CENTER_RIGHT, "%.1f°C", t);
+        it.printf(120, 30, id(font_temp), TextAlign::CENTER_RIGHT, "%.1f°C", t);
       }
-      // Heating indicator (LDR watching the panel lamp): fire in the top-right.
+      // Bottom-center status: time in the current heating state.
+      // Heating -> fire + "Heating mm:ss"; Idle -> "Idle hh:mm:ss".
+      uint32_t secs = (millis() - id(heater_changed_ms)) / 1000;
       if (id(heater_on).state) {
-        it.print(127, 0, id(font_icon_small), TextAlign::TOP_RIGHT, "\U000F0238");
+        it.print(30, 63, id(font_icon_small), TextAlign::BOTTOM_LEFT, "\U000F0238");
+        it.printf(48, 63, id(font_status), TextAlign::BOTTOM_LEFT,
+                  "Heating %u:%02u", secs / 60, secs % 60);
+      } else if (secs >= 3600) {
+        it.printf(64, 63, id(font_status), TextAlign::BOTTOM_CENTER,
+                  "Idle %u:%02u:%02u", secs / 3600, (secs % 3600) / 60, secs % 60);
+      } else {
+        it.printf(64, 63, id(font_status), TextAlign::BOTTOM_CENTER,
+                  "Idle %u:%02u", secs / 60, secs % 60);
       }
       // WiFi status in the top-left corner.
       if (WiFi.isConnected()) {
@@ -159,6 +181,9 @@ binary_sensor:
     threshold:
       upper: ${ldr_threshold_on}
       lower: ${ldr_threshold_off}
+    on_state:
+      then:
+        - lambda: 'id(heater_changed_ms) = millis();'
 
 # ---- TEMP tuning aid -----------------------------------------------------
 # The generic sensor value is logged at VERBOSE, so it's invisible at the
