@@ -1,7 +1,8 @@
 # Hot water tank temperature
 
-ESP8266 reads one or more DS18B20 one-wire probes on a hot water tank, shows the top
-temperature on a small OLED, and publishes to Home Assistant.
+ESP8266 reads one or more DS18B20 one-wire probes on a hot water tank, detects when the
+tank is heating (via an LDR on the panel's indicator lamp), shows the top temperature on
+a small OLED, and publishes to Home Assistant.
 
 ## Bill of materials
 
@@ -9,6 +10,8 @@ temperature on a small OLED, and publishes to Home Assistant.
 - Waterproof DS18B20 probe (stainless tube) — one now, a second later
 - One 4.7 kΩ resistor (the one-wire bus pull-up — required, see wiring)
 - GME12864-11/12/13 V3.2 OLED — 128×64 I2C, SSD1306 controller, address 0x3C
+- LDR / photoresistor (e.g. GL5528) + one 10 kΩ resistor (R_b) for the heating
+  indicator — have 4.7 kΩ / 47 kΩ on hand for tuning
 - 5 V supply for the D1 mini
 
 ## Install plan (two phases)
@@ -44,6 +47,16 @@ signal, not an absolute water temperature, until the internal bottom probe is ad
         GND ───────────────────────────  GND
    D6 / GPIO12 ───────────────────────── SDA
    D5 / GPIO14 ───────────────────────── SCL
+
+   Wemos D1 mini                         LDR (heating indicator)
+   ─────────────                         ───────────────────────
+        3V3 ──────────────── LDR ────────┐   (LDR in a dark tunnel on the lamp)
+                                          │
+         A0 ──────────────────────────────┤   (tap point)
+                                          │
+                                       [10 kΩ]  R_b
+                                          │
+        GND ──────────────────────────────┘
 ```
 
 - The 4.7 kΩ pull-up between DATA and 3V3 is **mandatory** — without it the bus
@@ -60,23 +73,59 @@ signal, not an absolute water temperature, until the internal bottom probe is ad
 - The OLED shows the top probe temperature (see Display below). If the image is
   shifted or garbled, the module is the SH1106 variant — change `model:` to
   `"SH1106 128x64"` in the YAML.
+- The **LDR divider** taps **A0**. On the Wemos D1 mini, A0 has an on-board 220k/100k
+  divider, so the header pin is **0–3.3 V tolerant** — a plain LDR + R_b divider off
+  3V3 is safe (no voltage-capping resistor needed, unlike a bare ESP-01/ESP8285). More
+  light → lower LDR resistance → higher voltage. See "Heating indicator (LDR)" below.
 
 ## Display
 
-The OLED shows the top probe temperature right-aligned (e.g. `21.2°C`), with a mood
-icon on the left that changes with the value:
+The OLED shows the top probe temperature right-aligned (e.g. `21.2°C`) with a static
+🌡️ thermometer icon on the left (`-- °C` until the first reading lands). When the LDR
+detects the panel lamp lit (i.e. the tank is heating), a 🔥 fire icon appears in the
+**top-right corner**.
 
-| Temperature | Icon         |
-|-------------|--------------|
-| < 30 °C     | ❄️ snowflake  |
-| 30–50 °C    | 🌡️ thermometer |
-| ≥ 50 °C     | 🔥 fire       |
+The temperature font is `gfonts://Roboto`; the icons come from the Material Design Icons
+webfont — both are downloaded at compile time, so the first `esphome compile`/`run`
+needs internet. (The SSD1306 is monochrome: the on-screen color is whatever the physical
+panel emits and isn't software-controllable.)
 
-Until the first reading lands it shows `-- °C` centered. The temperature font is
-`gfonts://Roboto`; the icons come from the Material Design Icons webfont — both are
-downloaded at compile time, so the first `esphome compile`/`run` needs internet. (The
-SSD1306 is monochrome: the on-screen color is whatever the physical panel emits and
-isn't software-controllable.)
+## Heating indicator (LDR)
+
+Detects when the tank is heating by reading the existing 220 VAC indicator lamp with an
+LDR — **no galvanic connection to mains**. The LDR feeds the A0 divider (see Wiring);
+ESPHome smooths it (EMA) and an `analog_threshold` binary sensor (`Heating`, with
+hysteresis + debounce) reports ON/OFF to Home Assistant and drives the OLED fire icon.
+
+### Dark tunnel (this is what rejects ambient light — ~90% mechanical)
+
+- Cover the LDR body/leads with **black heat-shrink**, leaving only the sensing face.
+- Extend a short black tube (heat-shrink or a 3D-printed black PETG hood) ~5–10 mm past
+  the face to form a tunnel; press it onto the indicator lens.
+- **Seal the rim** against the lens with black silicone or a black EVA-foam gasket — any
+  leaked ambient light enters here. Add a hot-glue strain relief on the cable.
+- Avoid PLA / plain tape (panel heat); use silicone / heat-shrink / PETG.
+
+### Choosing R_b (10 kΩ default)
+
+Pick R_b near the LDR's resistance at the ON/OFF boundary (max sensitivity when
+`R_b ≈ R_ldr` there): **4.7 kΩ** if the lamp drives the LDR very bright (few kΩ),
+**10 kΩ** general, **47 kΩ** if the lamp is dim / the LDR stays high-ohm. Keep
+R_b ≤ ~47 kΩ so it doesn't interact with A0's ~320 kΩ on-board input impedance.
+
+### Tuning the thresholds
+
+1. Flash, then `esphome logs` and watch `sensor.hot_water_tank_heater_indicator_ldr`
+   (`heater_ldr`, 200 ms, 3 decimals) with the tunnel mounted. Values are in A0
+   chip-scale units (0–1.0 V).
+2. **Lamp OFF**, vary room light (lamps, sun) → record the **max dark** value.
+3. **Lamp ON** → record the **min on** value.
+4. Want a clear gap (> 0.2, ratio > 3×). Set `ldr_threshold_off` just above max-dark and
+   `ldr_threshold_on` just below min-on (the gap between them is the hysteresis band).
+   These are `substitutions:` in the YAML.
+5. **Wrong-resistor signs:** ON ≈ OFF (tiny gap) → R_b far from R_ldr, change family
+   (brighter → 4.7 kΩ, dimmer → 47 kΩ); reads high even when OFF → ambient leaking, fix
+   the tunnel seal; reads ~0 even when ON → R_b too small, raise it.
 
 ## Flashing & bring-up
 
