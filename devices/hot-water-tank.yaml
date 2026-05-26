@@ -1,0 +1,63 @@
+# Hot water tank temperature monitor
+# Hardware: Wemos D1 mini (ESP8266) + DS18B20 one-wire temperature probe(s).
+# See hot-water-tank.md for wiring and bring-up notes.
+#
+# PROBES
+# ------
+# Built two-probe-capable. The TOP probe is active now (clamped to the external
+# tank metal, replacing the mechanical temp dial). A BOTTOM probe goes inside the
+# tank later, when the heater's lower section is disassembled — its sensor block
+# is below, commented out.
+#
+# IMPORTANT: with a single sensor on the bus, `address:` is optional. The moment a
+# second sensor is added the bus is ambiguous and BOTH sensors MUST carry an
+# explicit `address:` or the config won't validate. Discover the ROM(s) by flashing
+# once with no address and reading them from `esphome logs`.
+
+substitutions:
+  device_name: hot-water-tank
+  friendly_name: "Hot Water Tank"
+  one_wire_pin: GPIO4          # D2 on the Wemos D1 mini
+  poll_interval: 30s
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+
+esp8266:
+  board: d1_mini
+
+packages:
+  base: !include ../common/base.yaml
+
+# DS18B20(s) on a single GPIO one-wire bus. 4.7 kΩ pull-up from data to 3V3.
+one_wire:
+  - platform: gpio
+    pin: ${one_wire_pin}
+
+sensor:
+  # ---- Top probe (active): clamped to external tank metal, replaces the dial ----
+  # First flash with NO `address:` to discover the ROM in the logs, then pin it
+  # so adding the second probe later can't reassign which sensor is which.
+  - platform: dallas_temp
+    address: 0x3156d9d446a61328
+    name: "Tank Top Temperature"
+    id: tank_top_temp
+    update_interval: ${poll_interval}
+    resolution: 12
+    filters:
+      - filter_out: 85.0   # DS18B20 power-on / failed-conversion reset value
+      - filter_out: nan
+
+  # ---- Bottom probe (FUTURE): inside the tank, added when heater is opened ----
+  # When this is enabled, BOTH sensors MUST carry an explicit `address:` (the bus
+  # is ambiguous with >1 device and the config will fail to validate otherwise).
+  # - platform: dallas_temp
+  #   address: 0x0000000000000000
+  #   name: "Tank Bottom Temperature"
+  #   id: tank_bottom_temp
+  #   update_interval: ${poll_interval}
+  #   resolution: 12
+  #   filters:
+  #     - filter_out: 85.0
+  #     - filter_out: nan

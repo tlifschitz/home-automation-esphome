@@ -11,7 +11,9 @@ ESPHome configurations for the custom nodes on my home network.
 │   └── modbus-rtu.yaml    UART + Modbus RTU stack for RS485 devices
 ├── devices/               One file per physical node
 │   ├── abb-m1m-meter.yaml ABB M1M power meter via Modbus RTU
-│   └── abb-m1m-meter.md   Wiring & setup notes for that node
+│   ├── abb-m1m-meter.md   Wiring & setup notes for that node
+│   ├── hot-water-tank.yaml DS18B20 one-wire tank temperature
+│   └── hot-water-tank.md  Wiring & setup notes for that node
 ├── tools/                 Bench utilities (run on laptop, not ESP)
 │   ├── m1m_debug.py       Read M1M registers via USB-RS485 for verification
 │   ├── requirements.txt
