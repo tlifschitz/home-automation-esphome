@@ -68,10 +68,12 @@ font:
     glyphs:
       - "\U000F050F"  # mdi-thermometer
   - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
-    id: font_icon_small     # small, top-right corner — heating indicator
+    id: font_icon_small     # small corner status icons
     size: 18
     glyphs:
-      - "\U000F0238"  # mdi-fire (shown while the panel lamp is on)
+      - "\U000F0238"  # mdi-fire     (top-right: panel lamp / heating on)
+      - "\U000F05A9"  # mdi-wifi     (top-left: WiFi connected)
+      - "\U000F05AA"  # mdi-wifi-off (top-left: WiFi disconnected)
 
 # GME12864-11/12/13 V3.2 = SSD1306 128x64 at I2C 0x3C.
 # If the image is shifted/garbled, the module is the SH1106 variant instead:
@@ -93,6 +95,12 @@ display:
       // Heating indicator (LDR watching the panel lamp): fire in the top-right.
       if (id(heater_on).state) {
         it.print(127, 0, id(font_icon_small), TextAlign::TOP_RIGHT, "\U000F0238");
+      }
+      // WiFi status in the top-left corner.
+      if (WiFi.isConnected()) {
+        it.print(0, 0, id(font_icon_small), TextAlign::TOP_LEFT, "\U000F05A9");
+      } else {
+        it.print(0, 0, id(font_icon_small), TextAlign::TOP_LEFT, "\U000F05AA");
       }
 
 sensor:
