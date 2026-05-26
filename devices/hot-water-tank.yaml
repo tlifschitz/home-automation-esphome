@@ -50,6 +50,43 @@ globals:
     type: uint32_t
     restore_value: no
     initial_value: '0'
+  # ---- Daily stats (reset at midnight; not persisted across reboots) ----
+  - id: temp_max_today
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: temp_min_today
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: cycles_today
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+  - id: on_time_today_s
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+  # millis() of the last display page switch (for per-page dwell timing).
+  - id: page_changed_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+# Clock for the daily-stats midnight reset (SNTP over the network).
+time:
+  - platform: sntp
+    id: sntp_time
+    on_time:
+      - hours: 0
+        minutes: 0
+        seconds: 0
+        then:
+          - lambda: |-
+              id(temp_max_today) = NAN;
+              id(temp_min_today) = NAN;
+              id(cycles_today) = 0;
+              id(on_time_today_s) = 0;
 
 # DS18B20(s) on a single GPIO one-wire bus. 4.7 kΩ pull-up from data to 3V3.
 one_wire:
@@ -73,6 +110,10 @@ font:
     id: font_status         # bottom status line ("Heating mm:ss" / "Idle hh:mm:ss")
     size: 14
     glyphs: "Heating Idl:0123456789"   # unique glyphs only (Idle's e/d/l covered)
+  - file: "gfonts://Roboto"
+    id: font_stats          # page 2 daily-stats lines
+    size: 13
+    glyphs: "MaxinCyclesO 0123456789:.°-"
   # Material Design Icons — a friendlier face than plain text.
   - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
     id: font_icons          # large, left of the temperature
@@ -92,38 +133,59 @@ font:
 # change `model` to "SH1106 128x64".
 display:
   - platform: ssd1306_i2c
+    id: oled
     model: "SSD1306 128x64"
     address: 0x3C
-    lambda: |-
-      float t = id(tank_top_temp).state;
-      // Thermometer icon (always) on the left, temperature right-aligned.
-      // Both vertically centered on the 64px-tall panel.
-      it.print(8, 30, id(font_icons), TextAlign::CENTER_LEFT, "\U000F050F");
-      if (isnan(t)) {
-        it.print(120, 30, id(font_temp), TextAlign::CENTER_RIGHT, "-- °C");
-      } else {
-        it.printf(120, 30, id(font_temp), TextAlign::CENTER_RIGHT, "%.1f°C", t);
-      }
-      // Bottom-center status: time in the current heating state.
-      // Heating -> fire + "Heating mm:ss"; Idle -> "Idle hh:mm:ss".
-      uint32_t secs = (millis() - id(heater_changed_ms)) / 1000;
-      if (id(heater_on).state) {
-        it.print(30, 63, id(font_icon_small), TextAlign::BOTTOM_LEFT, "\U000F0238");
-        it.printf(48, 63, id(font_status), TextAlign::BOTTOM_LEFT,
-                  "Heating %u:%02u", secs / 60, secs % 60);
-      } else if (secs >= 3600) {
-        it.printf(64, 63, id(font_status), TextAlign::BOTTOM_CENTER,
-                  "Idle %u:%02u:%02u", secs / 3600, (secs % 3600) / 60, secs % 60);
-      } else {
-        it.printf(64, 63, id(font_status), TextAlign::BOTTOM_CENTER,
-                  "Idle %u:%02u", secs / 60, secs % 60);
-      }
-      // WiFi status in the top-left corner.
-      if (WiFi.isConnected()) {
-        it.print(0, 0, id(font_icon_small), TextAlign::TOP_LEFT, "\U000F05A9");
-      } else {
-        it.print(0, 0, id(font_icon_small), TextAlign::TOP_LEFT, "\U000F05AA");
-      }
+    pages:
+      # ---- Page 1: live temperature + heating/idle timer ----
+      - id: page_main
+        lambda: |-
+          float t = id(tank_top_temp).state;
+          // Thermometer icon (always) on the left, temperature right-aligned.
+          // Both vertically centered on the 64px-tall panel.
+          it.print(8, 30, id(font_icons), TextAlign::CENTER_LEFT, "\U000F050F");
+          if (isnan(t)) {
+            it.print(120, 30, id(font_temp), TextAlign::CENTER_RIGHT, "-- °C");
+          } else {
+            it.printf(120, 30, id(font_temp), TextAlign::CENTER_RIGHT, "%.1f°C", t);
+          }
+          // Bottom-center status: time in the current heating state.
+          // Heating -> fire + "Heating mm:ss"; Idle -> "Idle hh:mm:ss".
+          uint32_t secs = (millis() - id(heater_changed_ms)) / 1000;
+          if (id(heater_on).state) {
+            it.print(30, 63, id(font_icon_small), TextAlign::BOTTOM_LEFT, "\U000F0238");
+            it.printf(48, 63, id(font_status), TextAlign::BOTTOM_LEFT,
+                      "Heating %u:%02u", secs / 60, secs % 60);
+          } else if (secs >= 3600) {
+            it.printf(64, 63, id(font_status), TextAlign::BOTTOM_CENTER,
+                      "Idle %u:%02u:%02u", secs / 3600, (secs % 3600) / 60, secs % 60);
+          } else {
+            it.printf(64, 63, id(font_status), TextAlign::BOTTOM_CENTER,
+                      "Idle %u:%02u", secs / 60, secs % 60);
+          }
+          // WiFi status in the top-left corner.
+          if (WiFi.isConnected()) {
+            it.print(0, 0, id(font_icon_small), TextAlign::TOP_LEFT, "\U000F05A9");
+          } else {
+            it.print(0, 0, id(font_icon_small), TextAlign::TOP_LEFT, "\U000F05AA");
+          }
+      # ---- Page 2: daily statistics (reset at midnight) ----
+      - id: page_stats
+        lambda: |-
+          if (isnan(id(temp_max_today)))
+            it.print(2, 0, id(font_stats), "Max --");
+          else
+            it.printf(2, 0, id(font_stats), "Max %.1f°C", id(temp_max_today));
+          if (isnan(id(temp_min_today)))
+            it.print(2, 16, id(font_stats), "Min --");
+          else
+            it.printf(2, 16, id(font_stats), "Min %.1f°C", id(temp_min_today));
+          it.printf(2, 32, id(font_stats), "Cycles %u", id(cycles_today));
+          // Daily on-time, including the in-progress segment if heating now.
+          uint32_t on_s = id(on_time_today_s);
+          if (id(heater_on).state) on_s += (millis() - id(heater_changed_ms)) / 1000;
+          it.printf(2, 48, id(font_stats), "On %u:%02u:%02u",
+                    on_s / 3600, (on_s % 3600) / 60, on_s % 60);
 
 sensor:
   # ---- Heating indicator: LDR on A0 watching the 220 V panel lamp ----
@@ -154,6 +216,11 @@ sensor:
     filters:
       - filter_out: 85.0   # DS18B20 power-on / failed-conversion reset value
       - filter_out: nan
+    on_value:
+      then:
+        - lambda: |-
+            if (isnan(id(temp_max_today)) || x > id(temp_max_today)) id(temp_max_today) = x;
+            if (isnan(id(temp_min_today)) || x < id(temp_min_today)) id(temp_min_today) = x;
 
   # ---- Bottom probe (FUTURE): inside the tank, added when heater is opened ----
   # When this is enabled, BOTH sensors MUST carry an explicit `address:` (the bus
@@ -168,10 +235,10 @@ sensor:
   #     - filter_out: 85.0
   #     - filter_out: nan
 
-# ---- "Heating" from the LDR, with hysteresis + debounce ------------------
-# analog_threshold gives built-in hysteresis (upper/lower); the delays reject
-# brief glitches and tolerate short dropouts of the lamp. (Merges with the
-# `status` binary_sensor from common/base.yaml.)
+# ---- "Heating" from the LDR (analog_threshold w/ hysteresis) -------------
+# On each transition: stamp heater_changed_ms (drives the timer), count a
+# cycle on turn-on, and fold the just-ended ON period into the daily on-time
+# on turn-off. (Merges with the `status` binary_sensor from common/base.yaml.)
 binary_sensor:
   - platform: analog_threshold
     id: heater_on
@@ -181,9 +248,16 @@ binary_sensor:
     threshold:
       upper: ${ldr_threshold_on}
       lower: ${ldr_threshold_off}
-    on_state:
+    on_press:
       then:
-        - lambda: 'id(heater_changed_ms) = millis();'
+        - lambda: |-
+            id(heater_changed_ms) = millis();
+            id(cycles_today) += 1;
+    on_release:
+      then:
+        - lambda: |-
+            id(on_time_today_s) += (millis() - id(heater_changed_ms)) / 1000;
+            id(heater_changed_ms) = millis();
 
 # ---- TEMP tuning aid -----------------------------------------------------
 # The generic sensor value is logged at VERBOSE, so it's invisible at the
@@ -196,3 +270,15 @@ interval:
       - logger.log:
           format: "LDR raw = %.3f"
           args: ['id(heater_ldr).state']
+  # Page rotation with per-page dwell: page 1 for 15 s, page 2 for 5 s.
+  - interval: 1s
+    then:
+      - lambda: |-
+          uint32_t now = millis();
+          bool on_stats = id(oled).get_active_page() == id(page_stats);
+          uint32_t dwell = on_stats ? 5000 : 15000;
+          if (now - id(page_changed_ms) >= dwell) {
+            id(oled).show_page(on_stats ? id(page_main) : id(page_stats));
+            id(oled).update();
+            id(page_changed_ms) = now;
+          }
