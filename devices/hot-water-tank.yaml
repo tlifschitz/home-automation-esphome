@@ -67,6 +67,18 @@ globals:
     type: uint32_t
     restore_value: no
     initial_value: '0'
+  # ---- Monotonic lifetime counters for HA (total_increasing + utility_meter).
+  # NOT reset at midnight; a reboot resets them to 0, which utility_meter
+  # absorbs as a meter reset. No restore_value -> no flash wear. HA slices
+  # them into daily/weekly/monthly; the display keeps using the daily globals. ----
+  - id: on_time_total_s
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+  - id: cycles_total
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
   # millis() of the last display page switch (for per-page dwell timing).
   - id: page_changed_ms
     type: uint32_t
@@ -222,6 +234,29 @@ sensor:
             if (isnan(id(temp_max_today)) || x > id(temp_max_today)) id(temp_max_today) = x;
             if (isnan(id(temp_min_today)) || x < id(temp_min_today)) id(temp_min_today) = x;
 
+  # ---- Lifetime counters exposed to HA (feed a utility_meter for daily/weekly/
+  # monthly). total_increasing tolerates the reboot-to-0 as a meter reset.
+  # On-time includes the in-progress heating segment so it rises smoothly. ----
+  - platform: template
+    name: "Heating On-time"
+    id: heating_on_time_total
+    device_class: duration
+    unit_of_measurement: min
+    state_class: total_increasing
+    accuracy_decimals: 1
+    update_interval: 60s
+    lambda: |-
+      uint32_t s = id(on_time_total_s);
+      if (id(heater_on).state) s += (millis() - id(heater_changed_ms)) / 1000;
+      return s / 60.0f;
+  - platform: template
+    name: "Heating Cycles"
+    id: heating_cycles_total
+    state_class: total_increasing
+    accuracy_decimals: 0
+    update_interval: 60s
+    lambda: 'return id(cycles_total);'
+
   # ---- Bottom probe (FUTURE): inside the tank, added when heater is opened ----
   # When this is enabled, BOTH sensors MUST carry an explicit `address:` (the bus
   # is ambiguous with >1 device and the config will fail to validate otherwise).
@@ -253,10 +288,13 @@ binary_sensor:
         - lambda: |-
             id(heater_changed_ms) = millis();
             id(cycles_today) += 1;
+            id(cycles_total) += 1;
     on_release:
       then:
         - lambda: |-
-            id(on_time_today_s) += (millis() - id(heater_changed_ms)) / 1000;
+            uint32_t dur = (millis() - id(heater_changed_ms)) / 1000;
+            id(on_time_today_s) += dur;
+            id(on_time_total_s) += dur;
             id(heater_changed_ms) = millis();
 
 # ---- TEMP tuning aid -----------------------------------------------------
