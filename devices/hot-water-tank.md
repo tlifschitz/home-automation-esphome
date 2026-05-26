@@ -1,13 +1,14 @@
 # Hot water tank temperature
 
-ESP8266 reads one or more DS18B20 one-wire probes on a hot water tank and publishes
-to Home Assistant.
+ESP8266 reads one or more DS18B20 one-wire probes on a hot water tank, shows the top
+temperature on a small OLED, and publishes to Home Assistant.
 
 ## Bill of materials
 
 - Wemos D1 mini (ESP8266)
 - Waterproof DS18B20 probe (stainless tube) — one now, a second later
 - One 4.7 kΩ resistor (the one-wire bus pull-up — required, see wiring)
+- GME12864-11/12/13 V3.2 OLED — 128×64 I2C, SSD1306 controller, address 0x3C
 - 5 V supply for the D1 mini
 
 ## Install plan (two phases)
@@ -36,6 +37,13 @@ signal, not an absolute water temperature, until the internal bottom probe is ad
                        │
    D2 / GPIO4  ─────────┴───────────────  DATA (yellow)
         GND ──────────────────────────── GND (black)
+
+   Wemos D1 mini                         GME12864 OLED (I2C)
+   ─────────────                         ───────────────────
+        3V3 ───────────────────────────  VCC
+        GND ───────────────────────────  GND
+   D6 / GPIO12 ───────────────────────── SDA
+   D5 / GPIO14 ───────────────────────── SCL
 ```
 
 - The 4.7 kΩ pull-up between DATA and 3V3 is **mandatory** — without it the bus
@@ -45,6 +53,30 @@ signal, not an absolute water temperature, until the internal bottom probe is ad
 - GPIO4 (D2) is used because it has no boot-strapping role and doesn't conflict with
   the built-in LED on GPIO2. The UART pins stay free, so logs work over USB without
   the `logger: baud_rate: 0` workaround the meter node needs.
+- The OLED is on I2C at **D6/D5 (GPIO12/GPIO14)** — *not* the usual D2/D1, because
+  GPIO4 is already the one-wire pin. GPIO0/2/15 are avoided for I2C: their
+  boot-strapping levels clash with the bus idling high through its pull-ups. The
+  GME12864 module has its own on-board SDA/SCL pull-ups, so no extra resistors.
+- The OLED shows the top probe temperature (see Display below). If the image is
+  shifted or garbled, the module is the SH1106 variant — change `model:` to
+  `"SH1106 128x64"` in the YAML.
+
+## Display
+
+The OLED shows the top probe temperature right-aligned (e.g. `21.2°C`), with a mood
+icon on the left that changes with the value:
+
+| Temperature | Icon         |
+|-------------|--------------|
+| < 30 °C     | ❄️ snowflake  |
+| 30–50 °C    | 🌡️ thermometer |
+| ≥ 50 °C     | 🔥 fire       |
+
+Until the first reading lands it shows `-- °C` centered. The temperature font is
+`gfonts://Roboto`; the icons come from the Material Design Icons webfont — both are
+downloaded at compile time, so the first `esphome compile`/`run` needs internet. (The
+SSD1306 is monochrome: the on-screen color is whatever the physical panel emits and
+isn't software-controllable.)
 
 ## Flashing & bring-up
 
@@ -103,8 +135,8 @@ reading (it reports exactly 85.0 °C on a failed/incomplete conversion).
 
 ## Tuning
 
-- `poll_interval` (in `substitutions:`) — default 30 s. A water tank changes slowly,
-  so there's no need to poll fast; raise it to reduce log noise if desired.
+- `poll_interval` (in `substitutions:`) — set to 2 s for a responsive display. A tank
+  changes slowly, so raise it (e.g. 10–30 s) if you want to cut bus/log traffic.
 - `resolution: 12` gives 0.0625 °C steps with a ~750 ms conversion. Drop to 10 or 9
   for faster conversions if you ever put many sensors on the bus.
 

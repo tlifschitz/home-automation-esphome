@@ -18,7 +18,14 @@ substitutions:
   device_name: hot-water-tank
   friendly_name: "Hot Water Tank"
   one_wire_pin: GPIO4          # D2 on the Wemos D1 mini
-  poll_interval: 30s
+  poll_interval: 2s
+
+  # ---- OLED (GME12864 SSD1306 128x64, I2C) ----
+  # GPIO4 is taken by the one-wire bus, so I2C uses two other free, boot-safe
+  # pins. (Avoid GPIO0/2/15 for I2C: their boot-strapping levels clash with the
+  # bus idling high.)
+  display_sda_pin: GPIO12      # D6 -> OLED SDA
+  display_scl_pin: GPIO14      # D5 -> OLED SCL
 
 esphome:
   name: ${device_name}
@@ -34,6 +41,50 @@ packages:
 one_wire:
   - platform: gpio
     pin: ${one_wire_pin}
+
+# I2C bus for the OLED.
+i2c:
+  sda: ${display_sda_pin}
+  scl: ${display_scl_pin}
+  frequency: 400kHz
+
+# Only the glyphs we actually draw, to keep flash small. '°' is the UTF-8
+# degree sign (U+00B0) — it must be listed explicitly or "%.1f °C" prints blank.
+font:
+  - file: "gfonts://Roboto"
+    id: font_temp
+    size: 26
+    glyphs: "0123456789.- °C"
+  # Material Design Icons — a friendlier face than plain text. The icon
+  # changes with temperature (see the display lambda below).
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
+    id: font_icons
+    size: 36
+    glyphs:
+      - "\U000F0717"  # mdi-snowflake    (cold,  < 30 °C)
+      - "\U000F050F"  # mdi-thermometer  (warm,  30–50 °C)
+      - "\U000F0238"  # mdi-fire         (hot,   ≥ 50 °C)
+
+# GME12864-11/12/13 V3.2 = SSD1306 128x64 at I2C 0x3C.
+# If the image is shifted/garbled, the module is the SH1106 variant instead:
+# change `model` to "SH1106 128x64".
+display:
+  - platform: ssd1306_i2c
+    model: "SSD1306 128x64"
+    address: 0x3C
+    lambda: |-
+      float t = id(tank_top_temp).state;
+      if (isnan(t)) {
+        it.print(64, 32, id(font_temp), TextAlign::CENTER, "-- °C");
+        return;
+      }
+      // Mood icon on the left (snowflake / thermometer / fire), temperature
+      // right-aligned. Both vertically centered on the 64px-tall panel.
+      const char *icon = "\U000F050F";          // thermometer (warm)
+      if (t < 30)       icon = "\U000F0717";     // snowflake (cold)
+      else if (t >= 50) icon = "\U000F0238";     // fire (hot)
+      it.printf(8, 32, id(font_icons), TextAlign::CENTER_LEFT, "%s", icon);
+      it.printf(120, 32, id(font_temp), TextAlign::CENTER_RIGHT, "%.1f°C", t);
 
 sensor:
   # ---- Top probe (active): clamped to external tank metal, replaces the dial ----
