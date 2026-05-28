@@ -71,11 +71,6 @@ jobs:
       fail-fast: false
       matrix:
         file: ${{ fromJSON(needs.list-devices.outputs.files) }}
-    env:
-      # Relocate PlatformIO state into the workspace so actions/cache reaches
-      # it cleanly inside the container (avoids container-vs-runner $HOME
-      # confusion when caching ~/.platformio).
-      PLATFORMIO_CORE_DIR: ${{ github.workspace }}/.cache/platformio
     steps:
       - uses: actions/checkout@v4
 
@@ -96,13 +91,14 @@ jobs:
           EOF
 
       # PlatformIO downloads the framework + toolchain on first compile (~hundreds
-      # of MB). Cache key is invalidated only when YAML changes shape (board /
-      # framework live there); restore-keys gives a partial hydration fallback so
-      # the cache is almost always warm.
+      # of MB) into /root/.platformio (the container's $HOME/.platformio default).
+      # Cache key is invalidated only when YAML changes shape (board / framework
+      # live there); restore-keys gives a partial-hydration fallback so the cache
+      # is almost always warm.
       - name: Cache PlatformIO toolchains
         uses: actions/cache@v4
         with:
-          path: ${{ github.workspace }}/.cache/platformio
+          path: /root/.platformio
           key: pio-${{ runner.os }}-esphome-stable-${{ hashFiles('devices/*.yaml', 'common/*.yaml') }}
           restore-keys: |
             pio-${{ runner.os }}-esphome-stable-
