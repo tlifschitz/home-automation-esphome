@@ -211,9 +211,14 @@ sensor:
     pin: A0
     id: heater_ldr
     name: "Heater Indicator LDR"
+    internal: true                 # poll fast for threshold detection only — never
+                                   # registered with the API/HA, so no state stream.
+                                   # To re-tune ldr_threshold_on/off remotely, flip
+                                   # this to `false` temporarily so the raw value is
+                                   # exposed to HA again (or bump log_level to DEBUG
+                                   # to read the "LDR raw" interval log below).
     update_interval: 200ms
     accuracy_decimals: 3
-    entity_category: diagnostic
     filters:
       - exponential_moving_average:
           alpha: 0.7
@@ -222,20 +227,40 @@ sensor:
   # ---- Top probe (active): clamped to external tank metal, replaces the dial ----
   # First flash with NO `address:` to discover the ROM in the logs, then pin it
   # so adding the second probe later can't reassign which sensor is which.
-  - platform: dallas_temp
+  #
+  # The shared dallas_temp defaults (filters, resolution, poll interval) are
+  # anchored here as &tank_probe_defaults and reused by the bottom probe below
+  # via `<<: *tank_probe_defaults`. Only address/name/id (and the top's
+  # on_value max/min tracker) differ per-probe.
+  - <<: &tank_probe_defaults
+      platform: dallas_temp
+      update_interval: ${poll_interval}
+      resolution: 12
+      filters:
+        - filter_out: 85.0   # DS18B20 power-on / failed-conversion reset value
+        - filter_out: nan
+        - or:                # publish on a real change OR at least every 10 min (heartbeat),
+                             # so HA gets a periodic "still alive" datapoint while temp is flat
+            - delta: 0.1     # change ≥0.1 °C (matches the 1-decimal display); drops every-poll resends
+            - heartbeat: 10min
     address: 0x3156d9d446a61328
     name: "Tank Top Temperature"
     id: tank_top_temp
-    update_interval: ${poll_interval}
-    resolution: 12
-    filters:
-      - filter_out: 85.0   # DS18B20 power-on / failed-conversion reset value
-      - filter_out: nan
     on_value:
       then:
         - lambda: |-
             if (isnan(id(temp_max_today)) || x > id(temp_max_today)) id(temp_max_today) = x;
             if (isnan(id(temp_min_today)) || x < id(temp_min_today)) id(temp_min_today) = x;
+
+  # ---- Bottom probe (FUTURE): inside the tank, added when heater is opened ----
+  # When this is enabled, BOTH sensors MUST carry an explicit `address:` (the bus
+  # is ambiguous with >1 device and the config will fail to validate otherwise).
+  # Inherits platform / update_interval / resolution / filters from the top probe
+  # via the YAML merge key — only the per-probe keys are listed.
+  # - <<: *tank_probe_defaults
+  #   address: 0x0000000000000000
+  #   name: "Tank Bottom Temperature"
+  #   id: tank_bottom_temp
 
   # ---- Lifetime counters exposed to HA (feed a utility_meter for daily/weekly/
   # monthly). total_increasing tolerates the reboot-to-0 as a meter reset.
@@ -259,19 +284,6 @@ sensor:
     accuracy_decimals: 0
     update_interval: 60s
     lambda: 'return id(cycles_total);'
-
-  # ---- Bottom probe (FUTURE): inside the tank, added when heater is opened ----
-  # When this is enabled, BOTH sensors MUST carry an explicit `address:` (the bus
-  # is ambiguous with >1 device and the config will fail to validate otherwise).
-  # - platform: dallas_temp
-  #   address: 0x0000000000000000
-  #   name: "Tank Bottom Temperature"
-  #   id: tank_bottom_temp
-  #   update_interval: ${poll_interval}
-  #   resolution: 12
-  #   filters:
-  #     - filter_out: 85.0
-  #     - filter_out: nan
 
 # ---- "Heating" from the LDR (analog_threshold w/ hysteresis) -------------
 # On each transition: stamp heater_changed_ms (drives the timer), count a
