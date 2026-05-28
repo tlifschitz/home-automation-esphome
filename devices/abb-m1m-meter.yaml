@@ -52,6 +52,12 @@ packages:
 logger:
   baud_rate: 0
 
+# SNTP time source — required by base.yaml's `Uptime Timestamp` (type:
+# timestamp) sensor. No on_time automations needed on this node.
+time:
+  - platform: sntp
+    id: sntp_time
+
 # ---- Globals for the diagnostic sensors ---------------------------------
 globals:
   - id: m1m_last_success_ms
