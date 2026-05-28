@@ -102,13 +102,20 @@ jobs:
           restore-keys: |
             pio-${{ runner.os }}-esphome-stable-
 
-      # ESPHome puts `.esphome/` next to the YAML file (in devices/), not at the
-      # workspace root. Per-device key so a change in one YAML doesn't bust the
-      # other device's incremental compile.
+      # ESPHome puts `.esphome/` next to the YAML file (in devices/). Caching only
+      # build/<name>/ isn't enough: ESPHome reads sibling state files in storage/
+      # and idedata/ to decide whether "core config or version changed." If those
+      # are missing, it wipes .pioenvs/.piolibdeps on every run and the build-dir
+      # cache is thrown away. So we include all per-device state here. Per-device
+      # key so a change in one YAML doesn't bust the other device's incremental.
       - name: Cache esphome build (${{ steps.dev.outputs.name }})
         uses: actions/cache@v4
         with:
-          path: devices/.esphome/build/${{ steps.dev.outputs.name }}
+          path: |
+            devices/.esphome/build/${{ steps.dev.outputs.name }}
+            devices/.esphome/storage/${{ steps.dev.outputs.name }}.yaml.json
+            devices/.esphome/storage/${{ steps.dev.outputs.name }}.yaml.validated.yaml
+            devices/.esphome/idedata/${{ steps.dev.outputs.name }}.json
           key: esphome-${{ steps.dev.outputs.name }}-${{ hashFiles(matrix.file, 'common/*.yaml') }}
           restore-keys: |
             esphome-${{ steps.dev.outputs.name }}-
