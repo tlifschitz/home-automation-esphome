@@ -1,7 +1,9 @@
-name: esphome config
+name: esphome
 
-# Validates every devices/*.yaml with `esphome config` (schema + substitution
-# check, no compile).
+# 1. validate: `esphome config` on every devices/*.yaml (fast schema check).
+# 2. build:    `esphome compile` per device, runs only if every validate matrix
+#              job passed. PlatformIO toolchains and the per-device build dir
+#              are cached so reruns skip the heavy framework download.
 
 on:
   push:
@@ -40,7 +42,7 @@ jobs:
         shell: bash
         run: |
           # `esphome config` resolves every !secret reference, so it needs a
-          # secrets.yaml even though the values are never used. 
+          # secrets.yaml even though the values are never used.
           cat > common/secrets.yaml <<'EOF'
           wifi_ssid: "ci-ssid"
           wifi_password: "ci-password-12345"
@@ -52,3 +54,70 @@ jobs:
       - name: esphome config ${{ matrix.file }}
         shell: bash
         run: esphome config "${{ matrix.file }}"
+
+  build:
+    # Only run if every validate matrix job succeeded. Job-level `needs:` waits
+    # for the whole matrix, so a single failing device blocks the whole build
+    # stage — which is what we want (don't waste CI minutes compiling against
+    # broken config).
+    # Both deps are listed because GitHub Actions only exposes
+    # `needs.<job>.outputs.*` for jobs named in `needs:` directly — even though
+    # `validate` already depends on `list-devices` transitively.
+    needs: [list-devices, validate]
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/esphome/esphome:stable
+    strategy:
+      fail-fast: false
+      matrix:
+        file: ${{ fromJSON(needs.list-devices.outputs.files) }}
+    env:
+      # Relocate PlatformIO state into the workspace so actions/cache reaches
+      # it cleanly inside the container (avoids container-vs-runner $HOME
+      # confusion when caching ~/.platformio).
+      PLATFORMIO_CORE_DIR: ${{ github.workspace }}/.cache/platformio
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive device name
+        id: dev
+        shell: bash
+        run: echo "name=$(basename '${{ matrix.file }}' .yaml)" >> "$GITHUB_OUTPUT"
+
+      - name: Write CI-only secrets stub
+        shell: bash
+        run: |
+          cat > common/secrets.yaml <<'EOF'
+          wifi_ssid: "ci-ssid"
+          wifi_password: "ci-password-12345"
+          api_encryption_key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+          ota_password: "ci-ota-password"
+          fallback_ap_password: "ci-fallback-pass"
+          EOF
+
+      # PlatformIO downloads the framework + toolchain on first compile (~hundreds
+      # of MB). Cache key is invalidated only when YAML changes shape (board /
+      # framework live there); restore-keys gives a partial hydration fallback so
+      # the cache is almost always warm.
+      - name: Cache PlatformIO toolchains
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.cache/platformio
+          key: pio-${{ runner.os }}-esphome-stable-${{ hashFiles('devices/*.yaml', 'common/*.yaml') }}
+          restore-keys: |
+            pio-${{ runner.os }}-esphome-stable-
+
+      # ESPHome's per-device build dir (generated PlatformIO project + .pio
+      # objects). Keyed per device so a change in one device's YAML doesn't
+      # invalidate the other device's incremental compile.
+      - name: Cache esphome build (${{ steps.dev.outputs.name }})
+        uses: actions/cache@v4
+        with:
+          path: .esphome/build/${{ steps.dev.outputs.name }}
+          key: esphome-${{ steps.dev.outputs.name }}-${{ hashFiles(matrix.file, 'common/*.yaml') }}
+          restore-keys: |
+            esphome-${{ steps.dev.outputs.name }}-
+
+      - name: esphome compile ${{ matrix.file }}
+        shell: bash
+        run: esphome compile "${{ matrix.file }}"
