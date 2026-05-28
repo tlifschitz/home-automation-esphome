@@ -28,13 +28,52 @@ wifi:
 
 captive_portal:
 
+debug:
+  update_interval: 30s
+
 # Diagnostic entities every node should expose
 sensor:
   - platform: wifi_signal
     name: "WiFi Signal"
+    id: wifi_signal_db
     update_interval: 60s
     entity_category: diagnostic
+
+  - platform: uptime
+    name: "Uptime Timestamp"
+    type: timestamp
+    entity_category: diagnostic
+
+  - platform: debug
+    free:
+      name: "Heap Free"
+    block:                                # largest contiguous free block
+      name: "Heap Largest Free Block"     # if this is << free, fragmentation is biting
+    fragmentation:
+      name: "Heap Fragmentation"
+    loop_time:
+      name: "Loop Time"
 
 binary_sensor:
   - platform: status
     name: "Status"
+
+text_sensor:
+  - platform: debug
+    reset_reason:
+      name: "Reset Reason"
+    device:
+      name: "Device Info"                 # board, framework, compile date, etc.
+
+  - platform: version
+    name: "ESPHome Version"
+    entity_category: diagnostic
+
+button:
+  - platform: restart
+    name: "Restart"
+    entity_category: diagnostic
+
+  - platform: safe_mode
+    name: "Restart (Safe Mode)"           # boots minimal config — OTA rescue lifeline
+    entity_category: diagnostic
