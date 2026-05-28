@@ -208,6 +208,46 @@ sensor:
       - delta: 0.5
     skip_updates: 9
 
+  # ---- Apparent energy imported — companion to Wh, in kVAh ----
+  # Lets HA compute long-run average PF as Wh / VAh, and surfaces the
+  # reactive load buildup that the instantaneous PF can hide.
+  # No `device_class:` — ESPHome doesn't recognise `apparent_energy` yet
+  # (only apparent_power and reactive_energy), so we omit it; the sensor
+  # still records into HA Statistics via state_class: total_increasing.
+  - platform: modbus_controller
+    modbus_controller_id: m1m
+    name: "Apparent Energy Imported"
+    id: m1m_apparent_energy_import
+    register_type: holding
+    address: 160            # VAh Received
+    value_type: FP32_R
+    unit_of_measurement: kVAh
+    state_class: total_increasing
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001
+      - delta: 0.5
+    skip_updates: 9
+
+  # ---- Load seconds — meter-side counter of operating seconds ----
+  # u32 word-swapped (same CDAB byte order as the floats, so U_DWORD_R).
+  # The manual labels this "Load Hours" but the M1M 12 actually reports
+  # in seconds — confirmed against the front panel. Diagnostic-only;
+  # HA will format with `duration` device class.
+  - platform: modbus_controller
+    modbus_controller_id: m1m
+    name: "Load Seconds"
+    id: m1m_load_seconds
+    register_type: holding
+    address: 216            # Load Seconds (labeled "Load Hours Received" in M1M 96 manual)
+    value_type: U_DWORD_R
+    unit_of_measurement: s
+    device_class: duration
+    state_class: total_increasing
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    skip_updates: 59        # 10s poll * (59+1) = read once per minute
+
   # ---- Diagnostic: time since last successful Modbus read ---------------
   - platform: template
     name: "Modbus Seconds Since Last Read"

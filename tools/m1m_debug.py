@@ -81,8 +81,9 @@ class Register:
     name: str
     unit: str
     decimals: int = 2
-    # The legacy M1M 12 is float-only for measurements; if you add a
-    # u32 counter later (e.g. "Load seconds" at 216), set is_float=False.
+    # The legacy M1M 12 is float-only for measurements; the one non-float
+    # entry is "Load seconds" at 216 (u32, word-swapped) — set is_float=False
+    # to decode it via decode_u32_cdab() instead.
     is_float: bool = True
 
 
@@ -94,6 +95,8 @@ REGISTERS: List[Register] = [
     Register(150, "Current L1",          "A",   decimals=2),
     Register(156, "Frequency",           "Hz",  decimals=2),
     Register(158, "Energy imported",     "Wh",  decimals=0),
+    Register(160, "Apparent energy",     "VAh", decimals=0),
+    Register(216, "Load seconds",        "s",   decimals=0, is_float=False),
     # --- Useful totals (uncomment to also dump three-phase aggregates) ---
     # Register(100, "Active power total",   "W",   decimals=1),
     # Register(116, "Power factor avg",     "",    decimals=3),
