@@ -1,0 +1,54 @@
+name: esphome config
+
+# Validates every devices/*.yaml with `esphome config` (schema + substitution
+# check, no compile).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # Enumerate devices/*.yaml into a JSON array consumed as a dynamic matrix below.
+  list-devices:
+    runs-on: ubuntu-latest
+    outputs:
+      files: ${{ steps.find.outputs.files }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: find
+        run: |
+          files=$(ls devices/*.yaml | jq -R -s -c '[split("\n")[] | select(length>0)]')
+          echo "files=$files" >> "$GITHUB_OUTPUT"
+          echo "Discovered devices: $files"
+
+  validate:
+    needs: list-devices
+    runs-on: ubuntu-latest
+    # Official ESPHome image — esphome is already installed, no pip step needed.
+    container:
+      image: ghcr.io/esphome/esphome:stable
+    strategy:
+      fail-fast: false  # one bad device shouldn't hide failures in the others
+      matrix:
+        file: ${{ fromJSON(needs.list-devices.outputs.files) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write CI-only secrets stub
+        shell: bash
+        run: |
+          # `esphome config` resolves every !secret reference, so it needs a
+          # secrets.yaml even though the values are never used. 
+          cat > common/secrets.yaml <<'EOF'
+          wifi_ssid: "ci-ssid"
+          wifi_password: "ci-password-12345"
+          api_encryption_key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+          ota_password: "ci-ota-password"
+          fallback_ap_password: "ci-fallback-pass"
+          EOF
+
+      - name: esphome config ${{ matrix.file }}
+        shell: bash
+        run: esphome config "${{ matrix.file }}"
