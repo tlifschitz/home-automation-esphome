@@ -19,6 +19,9 @@ substitutions:
   friendly_name: "Hot Water Tank"
   one_wire_pin: GPIO4          # D2 on the Wemos D1 mini
   poll_interval: 2s
+  log_level: WARN              # or NONE for total silence
+  log_baud_rate: "0"           # disables UART logging entirely
+
 
   # ---- OLED (GME12864 SSD1306 128x64, I2C) ----
   # GPIO4 is taken by the one-wire bus, so I2C uses two other free, boot-safe
@@ -297,17 +300,17 @@ binary_sensor:
             id(on_time_total_s) += dur;
             id(heater_changed_ms) = millis();
 
+interval:
 # ---- TEMP tuning aid -----------------------------------------------------
 # The generic sensor value is logged at VERBOSE, so it's invisible at the
 # default DEBUG level. This prints the (EMA-filtered) LDR value every second
 # so you can read lamp-off vs lamp-on and set ldr_threshold_on/off.
 # REMOVE this block once the thresholds are calibrated.
-interval:
-  - interval: 1s
-    then:
-      - logger.log:
-          format: "LDR raw = %.3f"
-          args: ['id(heater_ldr).state']
+  # - interval: 1s
+  #   then:
+  #     - logger.log:
+  #         format: "LDR raw = %.3f"
+  #         args: ['id(heater_ldr).state']
   # Page rotation with per-page dwell: page 1 for 15 s, page 2 for 5 s.
   - interval: 1s
     then:

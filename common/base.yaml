@@ -6,8 +6,14 @@
 #
 # Expects the device file to define ${friendly_name} in substitutions.
 
+substitutions:
+  log_level: DEBUG        # default — dev builds
+  log_baud_rate: "115200" # default — UART logs on
+
 logger:
-  level: DEBUG
+  level: ${log_level}
+  baud_rate: ${log_baud_rate}
+
 
 api:
   encryption:
