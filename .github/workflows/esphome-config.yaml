@@ -91,25 +91,24 @@ jobs:
           EOF
 
       # PlatformIO downloads the framework + toolchain on first compile (~hundreds
-      # of MB) into /root/.platformio (the container's $HOME/.platformio default).
-      # Cache key is invalidated only when YAML changes shape (board / framework
-      # live there); restore-keys gives a partial-hydration fallback so the cache
-      # is almost always warm.
+      # of MB). GHA's container jobs override $HOME to /github/home, so PlatformIO
+      # writes to /github/home/.platformio — NOT /root/.platformio (which is the
+      # image's pre-baked content and useless for live caching).
       - name: Cache PlatformIO toolchains
         uses: actions/cache@v4
         with:
-          path: /root/.platformio
+          path: /github/home/.platformio
           key: pio-${{ runner.os }}-esphome-stable-${{ hashFiles('devices/*.yaml', 'common/*.yaml') }}
           restore-keys: |
             pio-${{ runner.os }}-esphome-stable-
 
-      # ESPHome's per-device build dir (generated PlatformIO project + .pio
-      # objects). Keyed per device so a change in one device's YAML doesn't
-      # invalidate the other device's incremental compile.
+      # ESPHome puts `.esphome/` next to the YAML file (in devices/), not at the
+      # workspace root. Per-device key so a change in one YAML doesn't bust the
+      # other device's incremental compile.
       - name: Cache esphome build (${{ steps.dev.outputs.name }})
         uses: actions/cache@v4
         with:
-          path: .esphome/build/${{ steps.dev.outputs.name }}
+          path: devices/.esphome/build/${{ steps.dev.outputs.name }}
           key: esphome-${{ steps.dev.outputs.name }}-${{ hashFiles(matrix.file, 'common/*.yaml') }}
           restore-keys: |
             esphome-${{ steps.dev.outputs.name }}-
